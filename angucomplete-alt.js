@@ -80,6 +80,80 @@
       var displaySearching;
       var displayNoResults;
 
+      function handleRequired(valid) {
+        scope.notEmpty = valid;
+        validState = scope.searchStr;
+        if (scope.fieldRequired && ctrl && scope.inputName) {
+          ctrl[scope.inputName].$setValidity(requiredClassName, valid);
+        }
+      }
+
+      function callOrAssign(value) {
+        if (typeof scope.selectedObject === 'function') {
+          scope.selectedObject(value);
+        }
+        else {
+          scope.selectedObject = value;
+        }
+
+        if (value) {
+          handleRequired(true);
+        }
+        else {
+          handleRequired(false);
+        }
+      }
+
+      function extractValue(obj, key) {
+        var keys, result;
+        if (key) {
+          keys= key.split('.');
+          result = obj;
+          for (var i = 0; i < keys.length; i++) {
+            result = result[keys[i]];
+          }
+        }
+        else {
+          result = obj;
+        }
+        return result;
+      }
+
+
+      function extractTitle(data) {
+        // split title fields and run extractValue for each and join with ' '
+        return scope.titleField.split(',')
+          .map(function(field) {
+            return extractValue(data, field);
+          })
+          .join(' ');
+      }
+
+      function handleInputChange(newval, initial) {
+        if (newval) {
+          if (typeof newval === 'object') {
+            scope.searchStr = extractTitle(newval);
+            callOrAssign({originalObject: newval});
+          } else if (typeof newval === 'string' && newval.length > 0) {
+            scope.searchStr = newval;
+          } else {
+            if (console && console.error) {
+              console.error('Tried to set ' + (!!initial ? 'initial' : '') + ' value of angucomplete to', newval, 'which is an invalid value');
+            }
+          }
+
+          handleRequired(true);
+        }
+      }
+
+      // #194 dropdown list not consistent in collapsing (bug).
+      function clickoutHandlerForDropdown(event) {
+        mousedownOn = null;
+        scope.hideResults(event);
+        document.body.removeEventListener('click', clickoutHandlerForDropdown);
+      }
+
+
       elem.on('mousedown', function(event) {
         if (event.target.id) {
           mousedownOn = event.target.id;
@@ -117,6 +191,15 @@
         }
       });
 
+
+      function clearResults() {
+        scope.showDropdown = false;
+        scope.results = [];
+        if (dd) {
+          dd.scrollTop = 0;
+        }
+      }
+
       scope.$on('angucomplete-alt:clearInput', function (event, elementId) {
         if (!elementId || elementId === scope.id) {
           scope.searchStr = null;
@@ -132,50 +215,12 @@
         }
       });
 
-      function handleInputChange(newval, initial) {
-        if (newval) {
-          if (typeof newval === 'object') {
-            scope.searchStr = extractTitle(newval);
-            callOrAssign({originalObject: newval});
-          } else if (typeof newval === 'string' && newval.length > 0) {
-            scope.searchStr = newval;
-          } else {
-            if (console && console.error) {
-              console.error('Tried to set ' + (!!initial ? 'initial' : '') + ' value of angucomplete to', newval, 'which is an invalid value');
-            }
-          }
-
-          handleRequired(true);
-        }
-      }
-
-      // #194 dropdown list not consistent in collapsing (bug).
-      function clickoutHandlerForDropdown(event) {
-        mousedownOn = null;
-        scope.hideResults(event);
-        document.body.removeEventListener('click', clickoutHandlerForDropdown);
-      }
 
       // for IE8 quirkiness about event.which
       function ie8EventNormalizer(event) {
         return event.which ? event.which : event.keyCode;
       }
 
-      function callOrAssign(value) {
-        if (typeof scope.selectedObject === 'function') {
-          scope.selectedObject(value);
-        }
-        else {
-          scope.selectedObject = value;
-        }
-
-        if (value) {
-          handleRequired(true);
-        }
-        else {
-          handleRequired(false);
-        }
-      }
 
       function callFunctionOrIdentity(fn) {
         return function(data) {
@@ -192,29 +237,6 @@
         clearResults();
       }
 
-      function extractTitle(data) {
-        // split title fields and run extractValue for each and join with ' '
-        return scope.titleField.split(',')
-          .map(function(field) {
-            return extractValue(data, field);
-          })
-          .join(' ');
-      }
-
-      function extractValue(obj, key) {
-        var keys, result;
-        if (key) {
-          keys= key.split('.');
-          result = obj;
-          for (var i = 0; i < keys.length; i++) {
-            result = result[keys[i]];
-          }
-        }
-        else {
-          result = obj;
-        }
-        return result;
-      }
 
       function findMatchString(target, str) {
         var result, matches, re;
@@ -234,13 +256,195 @@
         return $sce.trustAsHtml(result);
       }
 
-      function handleRequired(valid) {
-        scope.notEmpty = valid;
-        validState = scope.searchStr;
-        if (scope.fieldRequired && ctrl && scope.inputName) {
-          ctrl[scope.inputName].$setValidity(requiredClassName, valid);
+
+      function checkExactMatch(result, obj, str){
+        if (!str) { return false; }
+        for(var key in obj){
+          if(obj[key].toLowerCase() === str.toLowerCase()){
+            scope.selectResult(result);
+            return true;
+          }
+        }
+        return false;
+      }
+
+
+      function processResults(responseData, str) {
+        var i, description, image, text, formattedText, formattedDesc;
+
+        if (responseData && responseData.length > 0) {
+          scope.results = [];
+
+          for (i = 0; i < responseData.length; i++) {
+            if (scope.titleField && scope.titleField !== '') {
+              text = formattedText = extractTitle(responseData[i]);
+            }
+
+            description = '';
+            if (scope.descriptionField) {
+              description = formattedDesc = extractValue(responseData[i], scope.descriptionField);
+            }
+
+            image = '';
+            if (scope.imageField) {
+              image = extractValue(responseData[i], scope.imageField);
+            }
+
+            if (scope.matchClass) {
+              formattedText = findMatchString(text, str);
+              formattedDesc = findMatchString(description, str);
+            }
+
+            scope.results[scope.results.length] = {
+              title: formattedText,
+              description: formattedDesc,
+              image: image,
+              originalObject: responseData[i]
+            };
+          }
+
+        } else {
+          scope.results = [];
+        }
+
+        if (scope.autoMatch && scope.results.length === 1 &&
+          checkExactMatch(scope.results[0],
+            {title: text, desc: description || ''}, scope.searchStr)) {
+          scope.showDropdown = false;
+        } else if (scope.results.length === 0 && !displayNoResults) {
+          scope.showDropdown = false;
+        } else {
+          scope.showDropdown = true;
         }
       }
+
+
+      function cancelHttpRequest() {
+        if (httpCanceller) {
+          httpCanceller.resolve();
+        }
+      }
+
+
+      function httpSuccessCallbackGen(str) {
+        return function(responseData, status, headers, config) {
+          // normalize return obejct from promise
+          if (!status && !headers && !config && responseData.data) {
+            responseData = responseData.data;
+          }
+          scope.searching = false;
+          processResults(
+            extractValue(responseFormatter(responseData), scope.remoteUrlDataField),
+            str);
+        };
+      }
+
+      function httpErrorCallback(errorRes, status, headers, config) {
+        // cancelled/aborted
+        if (status === 0 || status === -1) { return; }
+
+        // normalize return obejct from promise
+        if (!status && !headers && !config) {
+          status = errorRes.status;
+        }
+        if (scope.remoteUrlErrorCallback) {
+          scope.remoteUrlErrorCallback(errorRes, status, headers, config);
+        }
+        else {
+          if (console && console.error) {
+            console.error('http error');
+          }
+        }
+      }
+
+      function getRemoteResults(str) {
+        var params = {},
+          url = scope.remoteUrl + encodeURIComponent(str);
+        if (scope.remoteUrlRequestFormatter) {
+          params = {params: scope.remoteUrlRequestFormatter(str)};
+          url = scope.remoteUrl;
+        }
+        if (!!scope.remoteUrlRequestWithCredentials) {
+          params.withCredentials = true;
+        }
+        cancelHttpRequest();
+        httpCanceller = $q.defer();
+        params.timeout = httpCanceller.promise;
+        $http.get(url, params)
+          .success(httpSuccessCallbackGen(str))
+          .error(httpErrorCallback);
+      }
+
+
+      function initResults() {
+        scope.showDropdown = displaySearching;
+        scope.currentIndex = scope.focusFirst ? 0 : -1;
+        scope.results = [];
+      }
+
+      function getRemoteResultsWithCustomHandler(str) {
+        cancelHttpRequest();
+
+        httpCanceller = $q.defer();
+
+        scope.remoteApiHandler(str, httpCanceller.promise)
+          .then(httpSuccessCallbackGen(str))
+          .catch(httpErrorCallback);
+
+        /* IE8 compatible
+         scope.remoteApiHandler(str, httpCanceller.promise)
+         ['then'](httpSuccessCallbackGen(str))
+         ['catch'](httpErrorCallback);
+         */
+      }
+
+      function getLocalResults(str) {
+        var i, match, s, value,
+          searchFields = scope.searchFields.split(','),
+          matches = [];
+        if (typeof scope.parseInput() !== 'undefined') {
+          str = scope.parseInput()(str);
+        }
+        for (i = 0; i < scope.localData.length; i++) {
+          match = false;
+
+          for (s = 0; s < searchFields.length; s++) {
+            value = extractValue(scope.localData[i], searchFields[s]) || '';
+            match = match || (value.toString().toLowerCase().indexOf(str.toString().toLowerCase()) >= 0);
+          }
+
+          if (match) {
+            matches[matches.length] = scope.localData[i];
+          }
+        }
+        return matches;
+      }
+
+
+      function searchTimerComplete(str) {
+        // Begin the search
+        if (!str || str.length < minlength) {
+          return;
+        }
+        if (scope.localData) {
+          scope.$apply(function() {
+            var matches;
+            if (typeof scope.localSearch() !== 'undefined') {
+              matches = scope.localSearch()(str);
+            } else {
+              matches = getLocalResults(str);
+            }
+            scope.searching = false;
+            processResults(matches, str);
+          });
+        }
+        else if (scope.remoteApiHandler) {
+          getRemoteResultsWithCustomHandler(str);
+        } else {
+          getRemoteResults(str);
+        }
+      }
+
 
       function keyupHandler(event) {
         var which = ie8EventNormalizer(event);
@@ -294,6 +498,7 @@
           }
         }
       }
+
 
       function handleOverrideSuggestions(event) {
         if (scope.overrideSuggestions &&
@@ -426,196 +631,6 @@
         }
       }
 
-      function httpSuccessCallbackGen(str) {
-        return function(responseData, status, headers, config) {
-          // normalize return obejct from promise
-          if (!status && !headers && !config && responseData.data) {
-            responseData = responseData.data;
-          }
-          scope.searching = false;
-          processResults(
-            extractValue(responseFormatter(responseData), scope.remoteUrlDataField),
-            str);
-        };
-      }
-
-      function httpErrorCallback(errorRes, status, headers, config) {
-        // cancelled/aborted
-        if (status === 0 || status === -1) { return; }
-
-        // normalize return obejct from promise
-        if (!status && !headers && !config) {
-          status = errorRes.status;
-        }
-        if (scope.remoteUrlErrorCallback) {
-          scope.remoteUrlErrorCallback(errorRes, status, headers, config);
-        }
-        else {
-          if (console && console.error) {
-            console.error('http error');
-          }
-        }
-      }
-
-      function cancelHttpRequest() {
-        if (httpCanceller) {
-          httpCanceller.resolve();
-        }
-      }
-
-      function getRemoteResults(str) {
-        var params = {},
-            url = scope.remoteUrl + encodeURIComponent(str);
-        if (scope.remoteUrlRequestFormatter) {
-          params = {params: scope.remoteUrlRequestFormatter(str)};
-          url = scope.remoteUrl;
-        }
-        if (!!scope.remoteUrlRequestWithCredentials) {
-          params.withCredentials = true;
-        }
-        cancelHttpRequest();
-        httpCanceller = $q.defer();
-        params.timeout = httpCanceller.promise;
-        $http.get(url, params)
-          .success(httpSuccessCallbackGen(str))
-          .error(httpErrorCallback);
-      }
-
-      function getRemoteResultsWithCustomHandler(str) {
-        cancelHttpRequest();
-
-        httpCanceller = $q.defer();
-
-        scope.remoteApiHandler(str, httpCanceller.promise)
-          .then(httpSuccessCallbackGen(str))
-          .catch(httpErrorCallback);
-
-        /* IE8 compatible
-        scope.remoteApiHandler(str, httpCanceller.promise)
-          ['then'](httpSuccessCallbackGen(str))
-          ['catch'](httpErrorCallback);
-        */
-      }
-
-      function clearResults() {
-        scope.showDropdown = false;
-        scope.results = [];
-        if (dd) {
-          dd.scrollTop = 0;
-        }
-      }
-
-      function initResults() {
-        scope.showDropdown = displaySearching;
-        scope.currentIndex = scope.focusFirst ? 0 : -1;
-        scope.results = [];
-      }
-
-      function getLocalResults(str) {
-        var i, match, s, value,
-            searchFields = scope.searchFields.split(','),
-            matches = [];
-        if (typeof scope.parseInput() !== 'undefined') {
-          str = scope.parseInput()(str);
-        }
-        for (i = 0; i < scope.localData.length; i++) {
-          match = false;
-
-          for (s = 0; s < searchFields.length; s++) {
-            value = extractValue(scope.localData[i], searchFields[s]) || '';
-            match = match || (value.toString().toLowerCase().indexOf(str.toString().toLowerCase()) >= 0);
-          }
-
-          if (match) {
-            matches[matches.length] = scope.localData[i];
-          }
-        }
-        return matches;
-      }
-
-      function checkExactMatch(result, obj, str){
-        if (!str) { return false; }
-        for(var key in obj){
-          if(obj[key].toLowerCase() === str.toLowerCase()){
-            scope.selectResult(result);
-            return true;
-          }
-        }
-        return false;
-      }
-
-      function searchTimerComplete(str) {
-        // Begin the search
-        if (!str || str.length < minlength) {
-          return;
-        }
-        if (scope.localData) {
-          scope.$apply(function() {
-            var matches;
-            if (typeof scope.localSearch() !== 'undefined') {
-              matches = scope.localSearch()(str);
-            } else {
-              matches = getLocalResults(str);
-            }
-            scope.searching = false;
-            processResults(matches, str);
-          });
-        }
-        else if (scope.remoteApiHandler) {
-          getRemoteResultsWithCustomHandler(str);
-        } else {
-          getRemoteResults(str);
-        }
-      }
-
-      function processResults(responseData, str) {
-        var i, description, image, text, formattedText, formattedDesc;
-
-        if (responseData && responseData.length > 0) {
-          scope.results = [];
-
-          for (i = 0; i < responseData.length; i++) {
-            if (scope.titleField && scope.titleField !== '') {
-              text = formattedText = extractTitle(responseData[i]);
-            }
-
-            description = '';
-            if (scope.descriptionField) {
-              description = formattedDesc = extractValue(responseData[i], scope.descriptionField);
-            }
-
-            image = '';
-            if (scope.imageField) {
-              image = extractValue(responseData[i], scope.imageField);
-            }
-
-            if (scope.matchClass) {
-              formattedText = findMatchString(text, str);
-              formattedDesc = findMatchString(description, str);
-            }
-
-            scope.results[scope.results.length] = {
-              title: formattedText,
-              description: formattedDesc,
-              image: image,
-              originalObject: responseData[i]
-            };
-          }
-
-        } else {
-          scope.results = [];
-        }
-
-        if (scope.autoMatch && scope.results.length === 1 &&
-            checkExactMatch(scope.results[0],
-              {title: text, desc: description || ''}, scope.searchStr)) {
-          scope.showDropdown = false;
-        } else if (scope.results.length === 0 && !displayNoResults) {
-          scope.showDropdown = false;
-        } else {
-          scope.showDropdown = true;
-        }
-      }
 
       function showAll() {
         if (scope.localData) {
